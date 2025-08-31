@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
-
-from flask import request, session
-from flask_restful import Resource
+from flask import Flask, request, session
+from flask_restful import Api, Resource
+from flask_migrate import Migrate
 from sqlalchemy.exc import IntegrityError
 
-from config import app, db, api
+from extensions import db, bcrypt  # import single db and bcrypt
 from models import User, Recipe
 
-class Signup(Resource):
-    pass
+def create_app():
+    app = Flask(__name__)
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.secret_key = 'super_secret_key'
+    app.json.compact = False
 
-class CheckSession(Resource):
-    pass
+    db.init_app(app)
+    bcrypt.init_app(app)
+    migrate = Migrate(app, db)
 
-class Login(Resource):
-    pass
+    api = Api(app)
 
-class Logout(Resource):
-    pass
+    # register resources...
+    from routes import register_resources
+    register_resources(api)
 
-class RecipeIndex(Resource):
-    pass
+    @app.route('/')
+    def home():
+        return '<h1>Recipe Sharing API</h1>'
 
-api.add_resource(Signup, '/signup', endpoint='signup')
-api.add_resource(CheckSession, '/check_session', endpoint='check_session')
-api.add_resource(Login, '/login', endpoint='login')
-api.add_resource(Logout, '/logout', endpoint='logout')
-api.add_resource(RecipeIndex, '/recipes', endpoint='recipes')
+    return app
 
 
 if __name__ == '__main__':
+    app = create_app()
     app.run(port=5555, debug=True)
