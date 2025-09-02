@@ -1,36 +1,86 @@
 #!/usr/bin/env python3
-from flask import Flask, request, session
-from flask_restful import Api, Resource
-from flask_migrate import Migrate
+
+from flask import request, session
+from flask_restful import Resource
 from sqlalchemy.exc import IntegrityError
 
-from extensions import db, bcrypt  # import single db and bcrypt
+from config import app, db, api
 from models import User, Recipe
 
-def create_app():
-    app = Flask(__name__)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.secret_key = 'super_secret_key'
-    app.json.compact = False
+class Signup(Resource):
+    def post(self):
+        data = request.get_json()
+        try:
+            new_user = User(
+                username=data['username'],
+                image_url=data['image_url'],
+                bio=data['bio']
+            )
+            new_user.password_hash = data['password']
+            db.session.add(new_user)
+            db.session.commit()
+            session['user_id'] = new_user.id
+            return new_user.to_dict(rules=('-password_hash',)), 201
+        except ValueError as e:
+            return {'errors': [str(e)]}, 422
 
-    db.init_app(app)
-    bcrypt.init_app(app)
-    migrate = Migrate(app, db)
+class CheckSession(Resource):
+    def get(self):
+        if session.get('user_id'):
+            user = User.query.filter(User.id == session['user_id']).first()
+            return user.to_dict(rules=('-password_hash',)), 200
+        return {'error': '401 Unauthorized'}, 401
 
-    api = Api(app)
+class Login(Resource):
+    def post(self):
+        data = request.get_json()
+        user = User.query.filter(User.username == data['username']).first()
+        if user:
+            if user.authenticate(data['password']):
+                session['user_id'] = user.id
+                return user.to_dict(rules=('-password_hash',)), 200
+            else:
+                return {'error': 'Invalid password'}, 401
+        else:
+            return {'error': 'Invalid username'}, 401
 
-    # register resources...
-    from routes import register_resources
-    register_resources(api)
+class Logout(Resource):
+    def delete(self):
+        if session.get('user_id'):
+            session['user_id'] = None
+            return {}, 204
+        return {'error': '401 Unauthorized'}, 401
 
-    @app.route('/')
-    def home():
-        return '<h1>Recipe Sharing API</h1>'
+class RecipeIndex(Resource):
+    def get(self):
+        if session.get('user_id'):
+            recipes = [r.to_dict(rules=('-user.recipes',)) for r in Recipe.query.all()]
+            return recipes, 200
+        return {'error': '401 Unauthorized'}, 401
 
-    return app
+    def post(self):
+        if session.get('user_id'):
+            data = request.get_json()
+            try:
+                new_recipe = Recipe(
+                    title=data['title'],
+                    instructions=data['instructions'],
+                    minutes_to_complete=data['minutes_to_complete'],
+                    user_id=session['user_id']
+                )
+                db.session.add(new_recipe)
+                db.session.commit()
+                return new_recipe.to_dict(rules=('-user.recipes',)), 201
+            except ValueError as e:
+                return {'errors': [str(e)]}, 422
+        return {'error': '401 Unauthorized'}, 401
+
+api.add_resource(Signup, '/signup', endpoint='signup')
+api.add_resource(CheckSession, '/check_session', endpoint='check_session')
+api.add_resource(Login, '/login', endpoint='login')
+api.add_resource(Logout, '/logout', endpoint='logout')
+api.add_resource(RecipeIndex, '/recipes', endpoint='recipes')
 
 
 if __name__ == '__main__':
-    app = create_app()
     app.run(port=5555, debug=True)
